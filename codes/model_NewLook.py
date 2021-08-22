@@ -744,17 +744,6 @@ class NewLook(nn.Module):
         if model_name not in ['TransE', 'BoxNewLook']:
             raise ValueError('model %s not supported' % model_name)
 
-    # model((positive_sample, negative_sample), rel_len, qtype, mode=mode)
-    # new_query_center = self.center_sets(query_center_1, offset_1, query_center_2, offset_2)
-    # new_offset = self.offset_sets(query_center_1, offset_1, query_center_2, offset_2)
-    # mode='single' is used for positive training in training phrase, only used when calculate positive score
-    # the input data(sample) is like this:
-    # when sample=(positive, negative), positive is not used
-    # for query graph inter-chain, union-chain and so on, which only used in test, the negative sample is all nodes
-    # when sample=positve, positve is the last element of sample in each row.
-    # the positive, negative ratio is 1:128.
-    # for example, for 2-inter. each row of positive = [head_id, rel_id, head2_id, rel2_id, positve_id],
-    # while negative = [xxx, xxx, ..., xxx] contains 128 elements.
     def forward(self, is_train, sample=None, rel_len=None, qtype=None, mode='single', find_subgraph=False, logical_triples=None,
                 subgraph_info_map=None):
         if find_subgraph:
