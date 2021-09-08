@@ -692,7 +692,7 @@ class NewLook(nn.Module):
                 self.node_group_one_hot_vector_multi.append(torch.tensor(xxx.tolist(),
                                                           requires_grad=False).cuda())
         self.group_times = len(self.group_adj_matrix_multi)
-        self.group_adj_weight_multi = nn.Parameter(torch.tensor([10]).float(), requires_grad=False).cuda()
+        self.group_adj_weight_multi = nn.Parameter(torch.tensor([6]).float(), requires_grad=False).cuda()
         # ------------------ group end
 
         # -------- shift begin
