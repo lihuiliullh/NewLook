@@ -45,16 +45,16 @@ def parse_args(args=None):
     )
 
     parser.add_argument('--cuda', action='store_true', help='use GPU')
-    
+
     parser.add_argument('--do_train', action='store_true')
     parser.add_argument('--do_valid', action='store_true')
     parser.add_argument('--do_test', action='store_true')
     parser.add_argument('--do_query', action='store_true')
     parser.add_argument('--evaluate_train', action='store_true', help='Evaluate on training data')
-    
+
     parser.add_argument('--data_path', type=str, default=None)
     parser.add_argument('--model', default='TransE', type=str)
-    
+
     parser.add_argument('-n', '--negative_sample_size', default=128, type=int)
     parser.add_argument('-d', '--hidden_dim', default=500, type=int)
     parser.add_argument('-g', '--gamma', default=12.0, type=float)
@@ -63,27 +63,27 @@ def parse_args(args=None):
     parser.add_argument('-b', '--batch_size', default=1024, type=int)
     parser.add_argument('-r', '--regularization', default=0.0, type=float)
     parser.add_argument('--test_batch_size', default=4, type=int, help='valid/test batch size')
-    parser.add_argument('--uni_weight', action='store_true', 
+    parser.add_argument('--uni_weight', action='store_true',
                         help='Otherwise use subsampling weighting like in word2vec')
-    
+
     parser.add_argument('-lr', '--learning_rate', default=0.0001, type=float)
     parser.add_argument('-cpu', '--cpu_num', default=10, type=int)
     parser.add_argument('-init', '--init_checkpoint', default=None, type=str)
     parser.add_argument('-save', '--save_path', default=None, type=str)
     parser.add_argument('--max_steps', default=100000, type=int)
     parser.add_argument('--warm_up_steps', default=None, type=int)
-    
+
     parser.add_argument('--save_checkpoint_steps', default=50000, type=int)
     parser.add_argument('--valid_steps', default=10000, type=int)
     parser.add_argument('--log_steps', default=100, type=int, help='train log every xx steps')
     parser.add_argument('--test_log_steps', default=1000, type=int, help='valid/test log every xx steps')
-    
+
     parser.add_argument('--nentity', type=int, default=0, help='DO NOT MANUALLY SET')
     parser.add_argument('--nrelation', type=int, default=0, help='DO NOT MANUALLY SET')
-    
+
     parser.add_argument('--geo', default='vec', type=str, help='vec or box')
     parser.add_argument('--print_on_screen', action='store_true')
-    
+
     parser.add_argument('--task', default='3i.3c.ci', type=str)
     parser.add_argument('--stepsforpath', type=int, default=0)
 
@@ -110,22 +110,22 @@ def override_config(args): #! may update here
     '''
     Override model and data configuration
     '''
-    
+
     with open(os.path.join(args.init_checkpoint, 'config.json'), 'r') as fjson:
         argparse_dict = json.load(fjson)
-    
+
     if args.data_path is None:
         args.data_path = argparse_dict['data_path']
     args.model = argparse_dict['model']
     args.hidden_dim = argparse_dict['hidden_dim']
     args.test_batch_size = argparse_dict['test_batch_size']
-    
+
 def save_model(model, optimizer, save_variable_list, args, before_finetune=False):
     '''
     Save the parameters of the model and the optimizer,
     as well as some other variables such as step and learning_rate
     '''
-    
+
     argparse_dict = vars(args)
     with open(os.path.join(args.save_path, 'config.json' if not before_finetune else 'config_before.json'), 'w') as fjson:
         json.dump(argparse_dict, fjson)
@@ -185,7 +185,28 @@ def log_metrics(mode, step, metrics):
     '''
     for metric in metrics:
         logging.info('%s %s at step %d: %f' % (mode, metric, step, metrics[metric]))
-        
+
+def configure_optimizers(model, current_learning_rate1, current_learning_rate2):
+    params = list(model.named_parameters())
+
+    param_frozen_list = []  # should be changed into torch.nn.ParameterList()
+    param_active_list = []  # should be changed into torch.nn.ParameterList()
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            if name == 'group_adj_weight_multi':
+                param_frozen_list.append(param)
+            else:
+                param_active_list.append(param)
+
+    grouped_parameters = [
+        {"params": param_active_list, 'lr': current_learning_rate1},
+        {"params": param_frozen_list, 'lr': current_learning_rate2},
+    ]
+
+    return grouped_parameters
+
+
 def main(args):
     set_global_seed(args.seed)
     args.test_batch_size = 1
@@ -196,7 +217,7 @@ def main(args):
         assert 'Box' in args.model
     elif args.geo == 'vec':
         assert 'Box' not in args.model
-        
+
     if args.train_onehop_only:
         assert '1c' in args.task
         args.center_deepsets = 'mean'
@@ -205,7 +226,7 @@ def main(args):
 
     if (not args.do_train) and (not args.do_valid) and (not args.do_test) and (not args.evaluate_train) and (not args.do_query):
         raise ValueError('one of train/val/test mode must be choosed.')
-    
+
     if args.init_checkpoint:
         override_config(args)
     elif args.data_path is None:
@@ -221,22 +242,22 @@ def main(args):
     else:
         assert args.stepsforpath <= args.max_steps
     # logs_newfb237_inter
-    
+
     args.save_path = 'logs/%s/%s/'%(args.data_path.split('/')[-1], args.geo)
     writer = SummaryWriter(args.save_path)
     if args.save_path and not os.path.exists(args.save_path):
         os.makedirs(args.save_path)
-    
+
     set_logger(args)
 
     with open('%s/stats.txt'%args.data_path) as f:
         entrel = f.readlines()
         nentity = int(entrel[0].split(' ')[-1])
         nrelation = int(entrel[1].split(' ')[-1])
-    
+
     args.nentity = nentity
     args.nrelation = nrelation
-    
+
     logging.info('Geo: %s' % args.geo)
     logging.info('Model: %s' % args.model)
     logging.info('Data Path: %s' % args.data_path)
@@ -247,7 +268,7 @@ def main(args):
     logging.info('#negative-sample-size: %d' % args.negative_sample_size)
 
     tasks = args.task.split('.')
-    
+
     train_ans = dict()
     valid_ans = dict()
     valid_ans_hard = dict()
@@ -510,31 +531,31 @@ def main(args):
         logging.info('#train: %d' % len(train_triples))
         logging.info('#valid: %d' % len(valid_triples))
         logging.info('#test: %d' % len(test_triples))
-    
+
     if '2c' in tasks:
         logging.info('#train_2c: %d' % len(train_triples_2))
         logging.info('#valid_2c: %d' % len(valid_triples_2))
         logging.info('#test_2c: %d' % len(test_triples_2))
-    
+
     if '3c' in tasks:
         logging.info('#train_3c: %d' % len(train_triples_3))
         logging.info('#valid_3c: %d' % len(valid_triples_3))
         logging.info('#test_3c: %d' % len(test_triples_3))
-    
+
     if '2i' in tasks:
         logging.info('#train_2i: %d' % len(train_triples_2i))
         logging.info('#valid_2i: %d' % len(valid_triples_2i))
         logging.info('#test_2i: %d' % len(test_triples_2i))
-    
+
     if '3i' in tasks:
         logging.info('#train_3i: %d' % len(train_triples_3i))
         logging.info('#valid_3i: %d' % len(valid_triples_3i))
         logging.info('#test_3i: %d' % len(test_triples_3i))
-    
+
     if 'ci' in tasks:
         logging.info('#valid_ci: %d' % len(valid_triples_ci))
         logging.info('#test_ci: %d' % len(test_triples_ci))
-    
+
     if 'ic' in tasks:
         logging.info('#valid_ic: %d' % len(valid_triples_ic))
         logging.info('#test_ic: %d' % len(test_triples_ic))
@@ -600,7 +621,7 @@ def main(args):
         node_group_one_hot_vector_multi=node_group_one_hot_vector_multi,
         group_adj_matrix_multi=group_adj_matrix_multi
     )
-    
+
     logging.info('Model Parameter Configuration:')
     num_params = 0
     for name, param in newlook.named_parameters():
@@ -611,14 +632,14 @@ def main(args):
 
     if args.cuda:
         newlook = newlook.cuda()
-    
+
     if args.do_train:
         # Set training dataloader iterator
         if '1c' in tasks:
             train_dataloader_tail = DataLoader(
-                TrainDataset(train_triples, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'), 
+                TrainDataset(train_triples, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'),
                 batch_size=args.batch_size,
-                shuffle=True, 
+                shuffle=True,
                 num_workers=max(1, args.cpu_num),
                 collate_fn=TrainDataset.collate_fn
             )
@@ -626,9 +647,9 @@ def main(args):
 
         if '2c' in tasks:
             train_dataloader_2_tail = DataLoader(
-                TrainDataset(train_triples_2, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'), 
+                TrainDataset(train_triples_2, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'),
                 batch_size=args.batch_size,
-                shuffle=True, 
+                shuffle=True,
                 num_workers=max(1, args.cpu_num),
                 collate_fn=TrainDataset.collate_fn
             )
@@ -636,9 +657,9 @@ def main(args):
 
         if '3c' in tasks:
             train_dataloader_3_tail = DataLoader(
-                TrainDataset(train_triples_3, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'), 
+                TrainDataset(train_triples_3, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'),
                 batch_size=args.batch_size,
-                shuffle=True, 
+                shuffle=True,
                 num_workers=max(1, args.cpu_num),
                 collate_fn=TrainDataset.collate_fn
             )
@@ -646,9 +667,9 @@ def main(args):
 
         if '2i' in tasks:
             train_dataloader_2i_tail = DataLoader(
-                TrainInterDataset(train_triples_2i, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'), 
+                TrainInterDataset(train_triples_2i, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'),
                 batch_size=args.batch_size,
-                shuffle=True, 
+                shuffle=True,
                 num_workers=max(1, args.cpu_num),
                 collate_fn=TrainInterDataset.collate_fn
             )
@@ -656,9 +677,9 @@ def main(args):
 
         if '3i' in tasks:
             train_dataloader_3i_tail = DataLoader(
-                TrainInterDataset(train_triples_3i, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'), 
+                TrainInterDataset(train_triples_3i, nentity, nrelation, args.negative_sample_size, train_ans, 'tail-batch'),
                 batch_size=args.batch_size,
-                shuffle=True, 
+                shuffle=True,
                 num_workers=max(1, args.cpu_num),
                 collate_fn=TrainInterDataset.collate_fn
             )
@@ -691,8 +712,12 @@ def main(args):
 
         # Set training configuration
         current_learning_rate = args.learning_rate
+        x_rate = 0.001
+        if "NELL" in args.data_path:
+            x_rate = x_rate * 1.5
+        grouped_parameters = configure_optimizers(newlook, current_learning_rate, x_rate)
         optimizer = torch.optim.Adam(
-            filter(lambda p: p.requires_grad, newlook.parameters()),
+            grouped_parameters,
             lr=current_learning_rate
         )
         if args.warm_up_steps:
@@ -714,8 +739,8 @@ def main(args):
         logging.info('Ramdomly Initializing %s Model...' % args.model)
         init_step = 0
 
-    
-    step = init_step 
+
+    step = init_step
 
     logging.info('task = %s' % args.task)
     logging.info('init_step = %d' % init_step)
@@ -729,9 +754,9 @@ def main(args):
     logging.info('negative_adversarial_sampling = %s' % str(args.negative_adversarial_sampling))
     if args.negative_adversarial_sampling:
         logging.info('adversarial_temperature = %f' % args.adversarial_temperature)
-    
+
     # Set valid dataloader as it would be evaluated during training
-    
+
     def evaluate_test():
         average_metrics = collections.defaultdict(list)
         average_c_metrics = collections.defaultdict(list)
@@ -1051,19 +1076,19 @@ def main(args):
                     for metric in log:
                         writer.add_scalar('2i_'+metric, log[metric], step)
                     training_logs.append(log)
-                
+
                 if '3i' in tasks:
                     log = newlook.train_step(newlook, optimizer, train_iterator_3i, args, step)
                     for metric in log:
                         writer.add_scalar('3i_'+metric, log[metric], step)
                     training_logs.append(log)
-                
+
                 if '2c' in tasks:
                     log = newlook.train_step(newlook, optimizer, train_iterator_2, args, step)
                     for metric in log:
                         writer.add_scalar('2c_'+metric, log[metric], step)
                     training_logs.append(log)
-                
+
                 if '3c' in tasks:
                     log = newlook.train_step(newlook, optimizer, train_iterator_3, args, step)
                     for metric in log:
@@ -1094,15 +1119,19 @@ def main(args):
             if step >= warm_up_steps:
                 current_learning_rate = current_learning_rate / 10
                 logging.info('Change learning_rate to %f at step %d' % (current_learning_rate, step))
+                x_rate = 0.0003
+                if "NELL" in args.data_path:
+                    x_rate = x_rate * 1.5
+                grouped_parameters = configure_optimizers(newlook, current_learning_rate, x_rate)
                 optimizer = torch.optim.Adam(
-                    filter(lambda p: p.requires_grad, newlook.parameters()),
+                    grouped_parameters,
                     lr=current_learning_rate
                 )
                 warm_up_steps = warm_up_steps * 3
-            
+
             if step % args.save_checkpoint_steps == 0:
                 save_variable_list = {
-                    'step': step, 
+                    'step': step,
                     'current_learning_rate': current_learning_rate,
                     'warm_up_steps': warm_up_steps
                 }
@@ -1124,13 +1153,13 @@ def main(args):
                     metrics['inter_loss'] = inter_loss_sum / inter_loss_num
                 log_metrics('Training average', step, metrics)
                 training_logs = []
-            
+
             if args.do_valid and step % args.valid_steps == 0 and step != 0:
                 logging.info('Evaluating on Valid Dataset...')
                 evaluate_val()
 
         save_variable_list = {
-            'step': step, 
+            'step': step,
             'current_learning_rate': current_learning_rate,
             'warm_up_steps': warm_up_steps
         }
