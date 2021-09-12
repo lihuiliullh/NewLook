@@ -678,9 +678,9 @@ class NewLook(nn.Module):
         if node_group_one_hot_vector_single is not None:
             self.node_group_one_hot_vector = torch.tensor(node_group_one_hot_vector_single.tolist(),
                                                           requires_grad=False).cuda()
-        self.group_adj_weight = nn.Parameter(torch.tensor([1]).float()).cuda()
-        self.disjoin_weight_for_group_matrix = nn.Parameter(torch.tensor([0.5]).float()).cuda()
-        self.disjoin_then_proj_threshold = nn.Parameter(torch.tensor([0.5]).float()).cuda()
+        self.group_adj_weight = nn.Parameter(torch.tensor([1]).float(), requires_grad=True)
+        self.disjoin_weight_for_group_matrix = nn.Parameter(torch.tensor([0.5]).float(), requires_grad=True)
+        self.disjoin_then_proj_threshold = nn.Parameter(torch.tensor([0.5]).float(), requires_grad=True)
 
         if group_adj_matrix_multi is not None:
             self.group_adj_matrix_multi = []
@@ -692,7 +692,7 @@ class NewLook(nn.Module):
                 self.node_group_one_hot_vector_multi.append(torch.tensor(xxx.tolist(),
                                                           requires_grad=False).cuda())
         self.group_times = len(self.group_adj_matrix_multi)
-        self.group_adj_weight_multi = nn.Parameter(torch.tensor([6]).float(), requires_grad=False).cuda()
+        self.group_adj_weight_multi = nn.Parameter(torch.tensor([0.1]).float(), requires_grad=True)
         # ------------------ group end
 
         # -------- shift begin
@@ -745,7 +745,7 @@ class NewLook(nn.Module):
             raise ValueError('model %s not supported' % model_name)
 
     def forward(self, is_train, sample=None, rel_len=None, qtype=None, mode='single', find_subgraph=False, logical_triples=None,
-                subgraph_info_map=None):
+                subgraph_info_map=None, step=-1):
         if find_subgraph:
             # iterate each triple in the logical_triples
             result_map = {}
@@ -1465,7 +1465,7 @@ class NewLook(nn.Module):
         if shift_of_node is None:
             break_here = True
 
-        if not is_train:
+        if not is_train or (is_train and step % 1000 == 0):
             one_hot_head_multi, relation_matrix_multi, tail_one_hot_multi = prepare_data(sample, qtype, mode,
                                                                                          self.group_times,
                                                                                          self.node_group_one_hot_vector_multi,
@@ -1474,7 +1474,7 @@ class NewLook(nn.Module):
 
             if self.model_name in model_func:
                 if qtype == '2-inter' or qtype == '3-inter' or qtype == '2-union' or qtype == '3-union' or qtype == '2-disjoin' or qtype == '3-disjoin':
-                    score, score_cen, offset_norm, score_cen_plus, _ = model_func[self.model_name](is_train, head,
+                    score, score_cen, offset_norm, score_cen_plus, _ = model_func[self.model_name](False, head,
                                                                                                    relation, tail,
                                                                                                    mode, offset,
                                                                                                    head_offset, 1,
@@ -1487,7 +1487,7 @@ class NewLook(nn.Module):
                                                                                                    relation_matrix_multi=relation_matrix_multi,
                                                                                                    tail_one_hot_multi=tail_one_hot_multi)
                 else:
-                    score, score_cen, offset_norm, score_cen_plus, _ = model_func[self.model_name](is_train, head,
+                    score, score_cen, offset_norm, score_cen_plus, _ = model_func[self.model_name](False, head,
                                                                                                    relation, tail,
                                                                                                    mode, offset,
                                                                                                    head_offset, rel_len,
@@ -1944,8 +1944,8 @@ class NewLook(nn.Module):
             score_center_plus, p=1, dim=-1) - self.group_adj_weight * group_dist
 
         if not is_train:
-            if qtype == 'disjoin-chain':
-                group_dist = dis_group_multi_whole
+            if qtype == 'disjoin-chain' or qtype == '3-disjoin':
+                group_dist = dis_group_multi_whole * 4
                 score = score - self.group_adj_weight_multi * group_dist
                 score_center = score_center - self.group_adj_weight_multi * group_dist
                 score_center_plus = score_center_plus - self.group_adj_weight_multi * group_dist
@@ -1986,7 +1986,7 @@ class NewLook(nn.Module):
         rel_len = int(train_iterator.qtype.split('-')[0])
         qtype = train_iterator.qtype
         negative_score, negative_score_cen, negative_offset, negative_score_cen_plus, _, _ = model(True,
-            (positive_sample, negative_sample), rel_len, qtype, mode=mode)
+            (positive_sample, negative_sample), rel_len, qtype, mode=mode, step=step)
 
         if model.geo == 'box':
             negative_score = F.logsigmoid(-negative_score_cen_plus).mean(dim=1)
@@ -1994,7 +1994,7 @@ class NewLook(nn.Module):
             negative_score = F.logsigmoid(-negative_score).mean(dim=1)
 
         positive_score, positive_score_cen, positive_offset, positive_score_cen_plus, _, _ = model(True, positive_sample,
-                                                                                                   rel_len, qtype)
+                                                                                                   rel_len, qtype, step=step)
         if model.geo == 'box':
             positive_score = F.logsigmoid(positive_score_cen_plus).squeeze(dim=1)
         else:
@@ -2687,4 +2687,3 @@ class NewLook(nn.Module):
         total_total.update(total_map_result_)
 
         # pickle.dump(total_total, open("total_answer_map_list.p", "wb"))
-
